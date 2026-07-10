@@ -248,6 +248,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       ⚠️ App này chỉ quản lý <b>Giá nhập</b>. <b>Giá bán</b> do App Bán hàng (POS) quản lý riêng, hiển thị ở đây chỉ để tham khảo.
     </div>
     <input class="search-input" type="text" id="product-search" placeholder="Tìm tên hoặc mã barcode..." oninput="renderProducts()">
+    <select id="category-filter" onchange="renderProducts()"
+      style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;color:var(--text);font-size:13px;margin-bottom:10px;outline:none;">
+      <option value="">-- Tất cả danh mục --</option>
+    </select>
     <div id="product-list"></div>
     <div class="spacer"></div>
   </div>
@@ -316,6 +320,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     </div>
     <div class="mf-row"><div class="field-label">Giá nhập (₫)</div><input class="field-input" type="number" id="p-costprice" inputmode="numeric"></div>
     <div class="mf-row"><div class="field-label">Tồn kho</div><input class="field-input" type="number" id="p-stock" inputmode="numeric" placeholder="0"></div>
+    <div class="mf-row">
+      <div class="field-label">Danh mục</div>
+      <input class="field-input" type="text" id="p-category" list="category-datalist" style="margin-bottom:0" placeholder="Nhập hoặc chọn danh mục...">
+      <datalist id="category-datalist"></datalist>
+    </div>
     <div id="p-price-readonly" style="font-size:12px;color:var(--text-muted);margin-bottom:10px;"></div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeProductModal()">Hủy</button>
@@ -649,7 +658,12 @@ function saveReceipt(){
     supplierName:selectedSupplier?selectedSupplier.name:'(Không rõ nguồn)',
     time:new Date().toLocaleString('vi-VN'),
     total,
-    items:cart.map(i=>({id:i.id,barcode:i.barcode,name:i.name,costPrice:i.costPrice,qty:i.qty}))
+    // Lưu kèm giá nhập TRƯỚC ĐÓ (prevCostPrice) của từng sản phẩm, để khi xóa phiếu
+    // này có thể hoàn giá nhập về đúng như trước khi tạo phiếu, không chỉ hoàn tồn kho.
+    items:cart.map(i=>{
+      const p=products.find(x=>x.id===i.id);
+      return {id:i.id,barcode:i.barcode,name:i.name,costPrice:i.costPrice,qty:i.qty,prevCostPrice:p?(p.costPrice||0):0};
+    })
   };
   // Cập nhật giá nhập mới nhất + cộng tồn kho cho từng sản phẩm
   cart.forEach(item=>{
@@ -683,7 +697,7 @@ function renderHistory(){
       <div class="receipt-card-body" id="rbody-${r.id}">
         ${r.items.map(i=>`<div class="receipt-item-row"><span>${i.name} × ${i.qty}</span><span>${fmtPrice(i.costPrice*i.qty)}</span></div>`).join('')}
         <div class="receipt-actions">
-          <button class="btn-receipt-action del" onclick="deleteReceipt('${r.id}')">🗑 Xóa phiếu (hoàn tồn kho)</button>
+          <button class="btn-receipt-action del" onclick="deleteReceipt('${r.id}')">🗑 Xóa phiếu (hoàn tồn kho + giá nhập)</button>
         </div>
       </div>
     </div>`).join('');
@@ -691,30 +705,59 @@ function renderHistory(){
 function toggleReceipt(id){document.getElementById('rbody-'+id).classList.toggle('open');}
 function deleteReceipt(id){
   const r=receipts.find(x=>x.id===id);if(!r)return;
-  if(!confirm('Xóa phiếu nhập "'+id+'"? Số lượng tồn kho tương ứng sẽ bị trừ lại.'))return;
+  if(!confirm('Xóa phiếu nhập "'+id+'"? Tồn kho sẽ bị trừ lại, giá nhập sẽ hoàn về mức trước phiếu này (nếu chưa bị phiếu mới hơn ghi đè).'))return;
   r.items.forEach(item=>{
     const idx=products.findIndex(p=>p.id===item.id);
-    if(idx>-1) products[idx].stock=Math.max(0,(products[idx].stock||0)-item.qty);
+    if(idx>-1){
+      products[idx].stock=Math.max(0,(products[idx].stock||0)-item.qty);
+      // Chỉ hoàn giá nhập nếu giá hiện tại VẪN ĐÚNG BẰNG giá của phiếu này —
+      // nghĩa là chưa có phiếu nhập mới hơn nào khác ghi đè giá sau đó.
+      // Nếu đã bị ghi đè bởi phiếu mới hơn, giữ nguyên giá hiện tại, không hoàn ngược.
+      if((products[idx].costPrice||0)===(item.costPrice||0)){
+        products[idx].costPrice=item.prevCostPrice||0;
+      }
+    }
   });
   receipts=receipts.filter(x=>x.id!==id);
-  saveProducts();saveReceipts();renderHistory();
-  showToast('Đã xóa phiếu nhập','');
+  saveProducts();saveReceipts();renderHistory();renderProducts();
+  showToast('Đã xóa phiếu nhập, hoàn tồn kho + giá nhập','');
   syncToSheets(true);
 }
 
 // ===== SẢN PHẨM (TAB) =====
+function refreshCategoryFilter(){
+  const sel=document.getElementById('category-filter');
+  const dl=document.getElementById('category-datalist');
+  if(!sel)return;
+  const cur=sel.value;
+  const seen=new Map();
+  products.forEach(p=>{
+    const raw=(p.category||'').trim();
+    if(!raw)return;
+    const key=raw.toLowerCase();
+    if(!seen.has(key))seen.set(key,raw);
+  });
+  const cats=[...seen.values()].sort((a,b)=>a.localeCompare(b,'vi'));
+  sel.innerHTML='<option value="">-- Tất cả danh mục --</option>'+cats.map(c=>`<option value="${c}">${c}</option>`).join('');
+  const matchOpt=[...sel.options].find(o=>o.value.toLowerCase()===cur.toLowerCase());
+  if(matchOpt)sel.value=matchOpt.value;
+  if(dl) dl.innerHTML=cats.map(c=>`<option value="${c}">`).join('');
+}
 function renderProducts(){
   const search=(document.getElementById('product-search')?.value||'').toLowerCase();
+  const catFilter=(document.getElementById('category-filter')?.value||'').toLowerCase();
   const list=document.getElementById('product-list');
   let f=products;
   if(search)f=f.filter(p=>p.name.toLowerCase().includes(search)||(p.barcode||'').includes(search));
-  if(!f.length){list.innerHTML='<div class="empty-state">'+(search?'Không tìm thấy':'Chưa có SP. Nhấn <b>+ Thêm mới</b>.')+'</div>';return;}
+  if(catFilter)f=f.filter(p=>(p.category||'').toLowerCase()===catFilter);
+  refreshCategoryFilter();
+  if(!f.length){list.innerHTML='<div class="empty-state">'+(search||catFilter?'Không tìm thấy':'Chưa có SP. Nhấn <b>+ Thêm mới</b>.')+'</div>';return;}
   list.innerHTML=`<div class="product-table">
     <div class="product-row header"><span>Tên (bấm để sửa)</span><span style="text-align:right">Tồn</span><span style="text-align:right">Nhập</span><span></span></div>
     ${f.map(p=>`<div class="product-row">
       <div onclick="openProductModal('${p.id}')" style="cursor:pointer;">
         <div style="font-weight:500;color:var(--text);">${p.name}</div>
-        <div style="font-size:10px;color:var(--text-muted);">${p.barcode||'—'}</div>
+        <div style="font-size:10px;color:var(--text-muted);">${p.barcode||'—'}${p.category?' · '+p.category:''}</div>
       </div>
       <span style="text-align:right;font-family:var(--mono);${(p.stock||0)<=0?'color:var(--red);':'color:var(--text-dim);'}">${p.stock||0}</span>
       <span class="product-price">${fmtPrice(p.costPrice||0)}</span>
@@ -725,6 +768,7 @@ function renderProducts(){
 function openProductModal(id=null){
   document.getElementById('product-modal').classList.add('open');
   document.getElementById('edit-id').value=id||'';
+  refreshCategoryFilter();
   const ro=document.getElementById('p-price-readonly');
   if(id){
     const p=products.find(x=>x.id===id);
@@ -733,6 +777,7 @@ function openProductModal(id=null){
     document.getElementById('p-barcode').value=p.barcode||'';
     document.getElementById('p-costprice').value=p.costPrice||0;
     document.getElementById('p-stock').value=p.stock||0;
+    document.getElementById('p-category').value=p.category||'';
     ro.textContent='Giá bán hiện tại (do POS quản lý): '+fmtPrice(p.price||0);
   } else {
     document.getElementById('p-id').value='';
@@ -740,6 +785,7 @@ function openProductModal(id=null){
     document.getElementById('p-barcode').value='';
     document.getElementById('p-costprice').value='';
     document.getElementById('p-stock').value='0';
+    document.getElementById('p-category').value='';
     ro.textContent='Giá bán sẽ do App Bán hàng (POS) thiết lập sau.';
   }
   setTimeout(()=>document.getElementById('p-name').focus(),100);
@@ -752,15 +798,19 @@ function saveProductMaster(){
   const barcode=document.getElementById('p-barcode').value.trim();
   const costPrice=parseInt(document.getElementById('p-costprice').value)||0;
   const stock=parseInt(document.getElementById('p-stock').value)||0;
+  const categoryRaw=document.getElementById('p-category').value.trim();
+  const existingCat=([...new Set(products.map(p=>p.category||'').filter(Boolean))])
+    .find(c=>c.toLowerCase()===categoryRaw.toLowerCase());
+  const category=existingCat||categoryRaw;
   if(!name){showToast('Nhập tên sản phẩm!','');return;}
   if(newId!==editId&&products.find(p=>p.id===newId)){showToast('ID đã tồn tại!','');return;}
   if(barcode&&products.find(p=>p.barcode===barcode&&p.id!==editId)){showToast('Barcode đã tồn tại!','');return;}
   if(editId){
     const idx=products.findIndex(p=>p.id===editId);
     // Giữ nguyên "price" (giá bán) — trường này do POS quản lý, không đụng vào.
-    products[idx]={id:newId,name,barcode,price:products[idx].price||0,costPrice,category:products[idx].category||'',stock};
+    products[idx]={id:newId,name,barcode,price:products[idx].price||0,costPrice,category,stock};
   } else {
-    products.push({id:newId,name,barcode,price:0,costPrice,category:'',stock});
+    products.push({id:newId,name,barcode,price:0,costPrice,category,stock});
   }
   saveProducts();renderProducts();closeProductModal();showToast('✓ Đã lưu SP','green');
   syncToSheets(true);
