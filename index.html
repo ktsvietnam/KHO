@@ -368,6 +368,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
     <div class="mf-row"><div class="field-label">ID sản phẩm</div><input class="field-input" type="text" id="qa-id" style="font-family:var(--mono);" placeholder="Tự sinh nếu để trống"></div>
     <div class="mf-row"><div class="field-label">Tên</div><input class="field-input" type="text" id="qa-name"></div>
     <div class="mf-row"><div class="field-label">Giá nhập (₫)</div><input class="field-input" type="number" id="qa-costprice" inputmode="numeric"></div>
+    <div class="mf-row">
+      <div class="field-label">Danh mục</div>
+      <input class="field-input" type="text" id="qa-category" list="qa-category-datalist" style="margin-bottom:0" placeholder="Nhập hoặc chọn danh mục...">
+      <datalist id="qa-category-datalist"></datalist>
+    </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeQuickAddModal()">Hủy</button>
       <button class="btn-save" onclick="confirmQuickAdd()">Tạo & Thêm vào phiếu</button>
@@ -507,6 +512,8 @@ function openQuickAddModal(barcode){
   document.getElementById('qa-id').value='';
   document.getElementById('qa-name').value='';
   document.getElementById('qa-costprice').value='';
+  document.getElementById('qa-category').value='';
+  refreshCategoryFilter();
   setTimeout(()=>document.getElementById('qa-name').focus(),100);
 }
 function closeQuickAddModal(){
@@ -518,11 +525,15 @@ function confirmQuickAdd(){
   const name=document.getElementById('qa-name').value.trim();
   const costPrice=parseInt(document.getElementById('qa-costprice').value)||0;
   const idRaw=document.getElementById('qa-id').value.trim();
+  const categoryRaw=document.getElementById('qa-category').value.trim();
+  const existingCat=([...new Set(products.map(p=>p.category||'').filter(Boolean))])
+    .find(c=>c.toLowerCase()===categoryRaw.toLowerCase());
+  const category=existingCat||categoryRaw;
   if(!name){showToast('Nhập tên sản phẩm!','');return;}
   const newId=idRaw||Date.now().toString();
   if(products.find(p=>p.id===newId)){showToast('ID đã tồn tại!','');return;}
   if(barcode&&products.find(p=>p.barcode===barcode)){showToast('Barcode đã tồn tại!','');return;}
-  const p={id:newId,barcode,name,price:0,costPrice,category:'',stock:0};
+  const p={id:newId,barcode,name,price:0,costPrice,category,stock:0};
   products.push(p);
   saveProducts();
   addToCart(p);
@@ -784,6 +795,8 @@ function refreshCategoryFilter(){
   const matchOpt=[...sel.options].find(o=>o.value.toLowerCase()===cur.toLowerCase());
   if(matchOpt)sel.value=matchOpt.value;
   if(dl) dl.innerHTML=cats.map(c=>`<option value="${c}">`).join('');
+  const qaDl=document.getElementById('qa-category-datalist');
+  if(qaDl) qaDl.innerHTML=cats.map(c=>`<option value="${c}">`).join('');
 }
 function renderProducts(){
   const search=(document.getElementById('product-search')?.value||'').toLowerCase();
