@@ -68,8 +68,13 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .item-saleprice-input{width:100%;max-width:120px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:3px 6px;color:var(--accent);font-family:var(--mono);font-size:11px;font-weight:600;}
 .item-saleprice-input:focus{border-color:var(--accent);}
 .item-saleprice-input::placeholder{color:var(--yellow);font-family:'Inter',sans-serif;font-weight:500;}
-.item-right-stack{display:flex;flex-direction:column;align-items:stretch;gap:4px;width:100px;flex-shrink:0;}
+.item-right-stack{display:flex;flex-direction:column;align-items:stretch;gap:4px;width:128px;flex-shrink:0;}
 .item-price-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 6px;color:var(--text);font-family:var(--mono);font-size:12px;text-align:right;}
+.item-price-discount-row{display:flex;gap:4px;}
+.item-discount-input{width:44px;flex-shrink:0;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:5px 4px;color:var(--yellow);font-family:var(--mono);font-size:11px;text-align:center;}
+.item-discount-input:focus{border-color:var(--yellow);}
+.item-discount-input::placeholder{color:var(--text-muted);}
+.item-final-price{font-size:10px;color:var(--text-muted);text-align:right;font-family:var(--mono);}
 .qty-control{display:flex;align-items:center;justify-content:space-between;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:1px 2px;width:100%;}
 .qty-btn{width:24px;height:24px;background:none;border:none;color:var(--text);font-size:17px;cursor:pointer;border-radius:5px;display:flex;align-items:center;justify-content:center;line-height:1;flex-shrink:0;}
 .qty-btn:hover{background:var(--surface2);}
@@ -500,7 +505,7 @@ function processBarcode(code){
 }
 function addToCart(p){
   const ex=cart.find(c=>c.id===p.id);
-  if(ex)ex.qty++; else cart.push({id:p.id,barcode:p.barcode,name:p.name,costPrice:p.costPrice||0,price:p.price||0,qty:1});
+  if(ex)ex.qty++; else cart.push({id:p.id,barcode:p.barcode,name:p.name,costPrice:p.costPrice||0,discount:p.discount||0,price:p.price||0,qty:1});
   renderCart();showToast('✓ '+p.name,'green');
 }
 
@@ -533,7 +538,7 @@ function confirmQuickAdd(){
   const newId=idRaw||Date.now().toString();
   if(products.find(p=>p.id===newId)){showToast('ID đã tồn tại!','');return;}
   if(barcode&&products.find(p=>p.barcode===barcode)){showToast('Barcode đã tồn tại!','');return;}
-  const p={id:newId,barcode,name,price:0,costPrice,category,stock:0};
+  const p={id:newId,barcode,name,price:0,costPrice,discount:0,category,stock:0};
   products.push(p);
   saveProducts();
   addToCart(p);
@@ -553,8 +558,8 @@ function renderCart(){
   }
   list.innerHTML=cart.map((item,i)=>{
     const sale=item.price||0;
-    const cost=item.costPrice||0;
-    const profit=sale-cost;
+    const finalCost=getFinalCost(item);
+    const profit=sale-finalCost;
     let profitHtml;
     if(sale<=0){
       profitHtml=`<div class="item-profit none">Chưa có giá bán</div>`;
@@ -578,16 +583,20 @@ function renderCart(){
             onchange="setQty(${i},this.value)" onclick="this.select()" inputmode="numeric">
           <button class="qty-btn" onclick="changeQty(${i},1)">+</button>
         </div>
-        <input class="item-price-input" type="number" value="${item.costPrice}" onchange="setCostPrice(${i},this.value)" title="Giá nhập" placeholder="Giá nhập">
+        <div class="item-price-discount-row">
+          <input class="item-price-input" type="number" value="${item.costPrice||''}" onchange="setCostPrice(${i},this.value)" title="Giá nhập" placeholder="Giá nhập">
+          <input class="item-discount-input" type="number" min="0" max="100" value="${item.discount||''}" onchange="setDiscount(${i},this.value)" title="Chiết khấu (%) - để trống = 0%" placeholder="0%">
+        </div>
+        ${item.discount?`<div class="item-final-price">Còn: ${fmtPrice(finalCost)}</div>`:''}
       </div>
       <div class="item-bottom-row">
         ${profitHtml}
-        <div class="item-total">${fmtPrice(item.costPrice*item.qty)}</div>
+        <div class="item-total">${fmtPrice(finalCost*item.qty)}</div>
         <button class="btn-remove" onclick="removeItem(${i})">✕</button>
       </div>
     </div>`;
   }).join('');
-  const total=cart.reduce((s,i)=>s+i.costPrice*i.qty,0);
+  const total=cart.reduce((s,i)=>s+getFinalCost(i)*i.qty,0);
   const totalQty=cart.reduce((s,i)=>s+i.qty,0);
   document.getElementById('summary-amount').textContent=fmtPrice(total);
   document.getElementById('summary-count').textContent=totalQty+' sản phẩm';
@@ -611,9 +620,23 @@ function setQty(i,val){
   renderCart();
 }
 function setCostPrice(i,val){
-  const n=parseInt(val);
+  const n=parseFloat(val);
   cart[i].costPrice=isNaN(n)?0:n;
   renderCart();
+}
+// Chiết khấu (%) áp lên giá nhập. Để trống ô chiết khấu => mặc định 0%.
+function setDiscount(i,val){
+  const n=parseFloat(val);
+  let d=(val===''||isNaN(n))?0:n;
+  if(d<0)d=0; if(d>100)d=100;
+  cart[i].discount=d;
+  renderCart();
+}
+// Giá nhập cuối = giá nhập - chiết khấu (%)
+function getFinalCost(item){
+  const raw=item.costPrice||0;
+  const d=item.discount||0;
+  return raw*(1-d/100);
 }
 function removeItem(i){cart.splice(i,1);renderCart();}
 function clearCart(){if(!cart.length)return;if(!confirm('Xóa toàn bộ phiếu nhập đang tạo?'))return;cart=[];renderCart();}
@@ -704,7 +727,7 @@ function closeSupDropdown(){
 // ===== LƯU PHIẾU NHẬP =====
 function saveReceipt(){
   if(!cart.length)return;
-  const total=cart.reduce((s,i)=>s+i.costPrice*i.qty,0);
+  const total=cart.reduce((s,i)=>s+getFinalCost(i)*i.qty,0);
   const receipt={
     id:'PN'+Date.now(),
     supplierId:selectedSupplier?selectedSupplier.id:'',
@@ -713,16 +736,20 @@ function saveReceipt(){
     total,
     // Lưu kèm giá nhập TRƯỚC ĐÓ (prevCostPrice) của từng sản phẩm, để khi xóa phiếu
     // này có thể hoàn giá nhập về đúng như trước khi tạo phiếu, không chỉ hoàn tồn kho.
+    // costPrice: giá nhập gốc (trước chiết khấu). discount: % chiết khấu áp dụng.
+    // finalCostPrice: giá nhập cuối (costPrice trừ chiết khấu) - dùng để cộng tồn/giá vốn.
     items:cart.map(i=>{
       const p=products.find(x=>x.id===i.id);
-      return {id:i.id,barcode:i.barcode,name:i.name,costPrice:i.costPrice,qty:i.qty,prevCostPrice:p?(p.costPrice||0):0};
+      const finalCostPrice=getFinalCost(i);
+      return {id:i.id,barcode:i.barcode,name:i.name,costPrice:i.costPrice,discount:i.discount||0,finalCostPrice,qty:i.qty,prevCostPrice:p?(p.costPrice||0):0};
     })
   };
   // Cập nhật giá nhập mới nhất + cộng tồn kho cho từng sản phẩm
   cart.forEach(item=>{
     const idx=products.findIndex(p=>p.id===item.id);
     if(idx>-1){
-      products[idx].costPrice=item.costPrice;
+      products[idx].costPrice=getFinalCost(item);
+      products[idx].discount=item.discount||0;
       products[idx].stock=(products[idx].stock||0)+item.qty;
     }
   });
@@ -748,7 +775,7 @@ function renderHistory(){
         <div class="receipt-total">${fmtPrice(r.total)}</div>
       </div>
       <div class="receipt-card-body" id="rbody-${r.id}">
-        ${r.items.map(i=>`<div class="receipt-item-row"><span>${i.name} × ${i.qty}</span><span>${fmtPrice(i.costPrice*i.qty)}</span></div>`).join('')}
+        ${r.items.map(i=>`<div class="receipt-item-row"><span>${i.name} × ${i.qty}${i.discount?` <span style="color:var(--yellow);">(CK ${i.discount}%)</span>`:''}</span><span>${fmtPrice((i.finalCostPrice??i.costPrice)*i.qty)}</span></div>`).join('')}
         <div class="receipt-actions">
           <button class="btn-receipt-action del" onclick="deleteReceipt('${r.id}')">🗑 Xóa phiếu (hoàn tồn kho + giá nhập)</button>
         </div>
@@ -766,7 +793,8 @@ function deleteReceipt(id){
       // Chỉ hoàn giá nhập nếu giá hiện tại VẪN ĐÚNG BẰNG giá của phiếu này —
       // nghĩa là chưa có phiếu nhập mới hơn nào khác ghi đè giá sau đó.
       // Nếu đã bị ghi đè bởi phiếu mới hơn, giữ nguyên giá hiện tại, không hoàn ngược.
-      if((products[idx].costPrice||0)===(item.costPrice||0)){
+      const writtenCost=item.finalCostPrice??item.costPrice;
+      if((products[idx].costPrice||0)===(writtenCost||0)){
         products[idx].costPrice=item.prevCostPrice||0;
       }
     }
@@ -862,9 +890,10 @@ function saveProductMaster(){
   if(barcode&&products.find(p=>p.barcode===barcode&&p.id!==editId)){showToast('Barcode đã tồn tại!','');return;}
   if(editId){
     const idx=products.findIndex(p=>p.id===editId);
-    products[idx]={id:newId,name,barcode,price,costPrice,category,stock};
+    const oldDiscount=products[idx]?.discount||0;
+    products[idx]={id:newId,name,barcode,price,costPrice,discount:oldDiscount,category,stock};
   } else {
-    products.push({id:newId,name,barcode,price,costPrice,category,stock});
+    products.push({id:newId,name,barcode,price,costPrice,discount:0,category,stock});
   }
   saveProducts();renderProducts();closeProductModal();showToast('✓ Đã lưu SP','green');
   syncToSheets(true);
@@ -988,9 +1017,9 @@ async function gsCheck(){
   }catch{return null;}
 }
 
-// Cột: id, barcode, name, price(giá bán - do POS quản lý, chỉ mang theo), costPrice(giá nhập), category, stock
-function productsToRows(){return[['id','barcode','name','price','costPrice','category','stock'],...products.map(p=>[p.id,p.barcode||'',p.name,p.price||0,p.costPrice||0,p.category||'',p.stock||0])];}
-function rowsToProducts(rows){if(rows.length<2)return[];return rows.slice(1).filter(r=>r[0]).map(r=>({id:String(r[0]),barcode:String(r[1]||''),name:String(r[2]),price:Number(r[3])||0,costPrice:Number(r[4])||0,category:String(r[5]||''),stock:Number(r[6])||0}));}
+// Cột: id, barcode, name, price(giá bán - do POS quản lý, chỉ mang theo), costPrice(giá nhập cuối - đã trừ chiết khấu), discount(% chiết khấu lần nhập gần nhất), category, stock
+function productsToRows(){return[['id','barcode','name','price','costPrice','discount','category','stock'],...products.map(p=>[p.id,p.barcode||'',p.name,p.price||0,p.costPrice||0,p.discount||0,p.category||'',p.stock||0])];}
+function rowsToProducts(rows){if(rows.length<2)return[];return rows.slice(1).filter(r=>r[0]).map(r=>({id:String(r[0]),barcode:String(r[1]||''),name:String(r[2]),price:Number(r[3])||0,costPrice:Number(r[4])||0,discount:Number(r[5])||0,category:String(r[6]||''),stock:Number(r[7])||0}));}
 function suppliersToRows(){return[['id','name','phone','addr'],...suppliers.map(s=>[s.id,s.name,s.phone||'',s.addr||''])];}
 function rowsToSuppliers(rows){if(rows.length<2)return[];return rows.slice(1).filter(r=>r[0]).map(r=>({id:String(r[0]),name:String(r[1]),phone:String(r[2]||''),addr:String(r[3]||'')}));}
 function receiptsToRows(){return[['id','supplierId','supplierName','time','total','items'],...receipts.map(r=>[r.id,r.supplierId||'',r.supplierName||'',r.time,r.total,JSON.stringify(r.items)])];}
