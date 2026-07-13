@@ -368,7 +368,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 <div class="modal-overlay modal-top" id="quickadd-modal">
   <div class="modal">
     <div class="modal-title">🆕 Sản phẩm chưa có — Thêm mới</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">Không tìm thấy mã <b id="qa-barcode-display" style="font-family:var(--mono);color:var(--accent);"></b> trong danh sách. Điền thông tin để tạo sản phẩm mới rồi thêm vào phiếu nhập.</div>
+    <div id="qa-desc" style="font-size:12px;color:var(--text-muted);margin-bottom:12px;"></div>
     <input type="hidden" id="qa-barcode">
     <div class="mf-row"><div class="field-label">ID sản phẩm</div><input class="field-input" type="text" id="qa-id" style="font-family:var(--mono);" placeholder="Tự sinh nếu để trống"></div>
     <div class="mf-row"><div class="field-label">Tên</div><input class="field-input" type="text" id="qa-name"></div>
@@ -509,17 +509,44 @@ function addToCart(p){
   renderCart();showToast('✓ '+p.name,'green');
 }
 
+// ===== TỰ SINH ID / BARCODE =====
+function generateProductId(){
+  let id;
+  do{ id=Date.now().toString()+Math.floor(Math.random()*90+10); }
+  while(products.some(p=>p.id===id));
+  return id;
+}
+function generateBarcode(){
+  // Mã nội bộ 13 số, tiền tố "20" (dải mã dùng nội bộ, không trùng barcode thật)
+  let code;
+  do{
+    code='20'+Date.now().toString().slice(-9)+Math.floor(Math.random()*90+10);
+  }while(products.some(p=>p.barcode===code));
+  return code;
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 // ===== QUICK ADD (sản phẩm mới ngay lúc quét) =====
-function openQuickAddModal(barcode){
+function openQuickAddModal(barcode,prefillName){
   document.getElementById('quickadd-modal').classList.add('open');
   document.getElementById('qa-barcode').value=barcode||'';
-  document.getElementById('qa-barcode-display').textContent=barcode||'(không có mã)';
+  const desc=document.getElementById('qa-desc');
+  if(barcode){
+    desc.innerHTML='Không tìm thấy mã <b style="font-family:var(--mono);color:var(--accent);">'+escapeHtml(barcode)+'</b> trong danh sách. Điền thông tin để tạo sản phẩm mới rồi thêm vào phiếu nhập.';
+  }else{
+    desc.innerHTML='Chưa có sản phẩm này trong danh sách. Điền thông tin để tạo sản phẩm mới — <b style="color:var(--accent);">mã barcode sẽ được hệ thống tự động sinh ra</b>.';
+  }
   document.getElementById('qa-id').value='';
-  document.getElementById('qa-name').value='';
+  document.getElementById('qa-name').value=prefillName||'';
   document.getElementById('qa-costprice').value='';
   document.getElementById('qa-category').value='';
   refreshCategoryFilter();
-  setTimeout(()=>document.getElementById('qa-name').focus(),100);
+  setTimeout(()=>{
+    if(prefillName) document.getElementById('qa-costprice').focus();
+    else document.getElementById('qa-name').focus();
+  },100);
 }
 function closeQuickAddModal(){
   document.getElementById('quickadd-modal').classList.remove('open');
@@ -535,10 +562,15 @@ function confirmQuickAdd(){
     .find(c=>c.toLowerCase()===categoryRaw.toLowerCase());
   const category=existingCat||categoryRaw;
   if(!name){showToast('Nhập tên sản phẩm!','');return;}
-  const newId=idRaw||Date.now().toString();
+  const newId=idRaw||generateProductId();
   if(products.find(p=>p.id===newId)){showToast('ID đã tồn tại!','');return;}
-  if(barcode&&products.find(p=>p.barcode===barcode)){showToast('Barcode đã tồn tại!','');return;}
-  const p={id:newId,barcode,name,price:0,costPrice,discount:0,category,stock:0};
+  let finalBarcode=barcode;
+  if(finalBarcode){
+    if(products.find(p=>p.barcode===finalBarcode)){showToast('Barcode đã tồn tại!','');return;}
+  }else{
+    finalBarcode=generateBarcode();
+  }
+  const p={id:newId,barcode:finalBarcode,name,price:0,costPrice,discount:0,category,stock:0};
   products.push(p);
   saveProducts();
   addToCart(p);
@@ -644,15 +676,25 @@ function clearCart(){if(!cart.length)return;if(!confirm('Xóa toàn bộ phiếu
 // ===== SEARCH SẢN PHẨM TRONG TAB NHẬP =====
 let nhapDropdownIndex=-1;
 function onSearchNhap(val){
-  const q=val.trim().toLowerCase();
+  const raw=val.trim();
+  const q=raw.toLowerCase();
   const dd=document.getElementById('nhap-dropdown');
   nhapDropdownIndex=-1;
   if(!q){dd.classList.remove('open');dd.innerHTML='';return;}
   const matches=products.filter(p=>p.name.toLowerCase().includes(q)).slice(0,10);
-  dd.innerHTML=matches.length
-    ?matches.map(p=>`<div class="dropdown-item" data-id="${p.id}" onmousedown="addProductByIdToCart('${p.id}')"><span class="dropdown-item-name">${p.name}</span></div>`).join('')
-    :'<div class="dropdown-empty">Không tìm thấy — quét mã để tạo sản phẩm mới</div>';
+  if(matches.length){
+    dd.innerHTML=matches.map(p=>`<div class="dropdown-item" data-id="${p.id}" onmousedown="addProductByIdToCart('${p.id}')"><span class="dropdown-item-name">${p.name}</span></div>`).join('');
+  }else{
+    dd.innerHTML=`<div class="dropdown-item" data-name="${escapeHtml(raw)}" onmousedown="createNewProductFromName(this.dataset.name)" style="color:var(--accent);font-weight:600;">
+      <span class="dropdown-item-name">➕ Tạo sản phẩm mới: "${escapeHtml(raw)}"</span>
+    </div>`;
+  }
   dd.classList.add('open');
+}
+function createNewProductFromName(name){
+  closeNhapDropdown();
+  document.getElementById('search-nhap-input').value='';
+  openQuickAddModal(null,name);
 }
 function onSearchNhapKey(e){
   const dd=document.getElementById('nhap-dropdown');
@@ -660,7 +702,14 @@ function onSearchNhapKey(e){
   if(!items.length)return;
   if(e.key==='ArrowDown'){e.preventDefault();nhapDropdownIndex=Math.min(nhapDropdownIndex+1,items.length-1);}
   else if(e.key==='ArrowUp'){e.preventDefault();nhapDropdownIndex=Math.max(nhapDropdownIndex-1,0);}
-  else if(e.key==='Enter'){e.preventDefault();const id=(items[nhapDropdownIndex]||items[0])?.dataset.id;if(id)addProductByIdToCart(id);return;}
+  else if(e.key==='Enter'){
+    e.preventDefault();
+    const el=items[nhapDropdownIndex]||items[0];
+    if(!el)return;
+    if(el.dataset.id) addProductByIdToCart(el.dataset.id);
+    else if(el.dataset.name!==undefined) createNewProductFromName(el.dataset.name);
+    return;
+  }
   else if(e.key==='Escape'){closeNhapDropdown();return;}
   items.forEach((el,i)=>el.classList.toggle('selected',i===nhapDropdownIndex));
 }
