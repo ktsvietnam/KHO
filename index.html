@@ -119,6 +119,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .search-input::placeholder{color:var(--text-muted);}
 .empty-state{text-align:center;padding:32px 16px;color:var(--text-muted);font-size:13px;}
 
+.product-thumb{width:40px;height:40px;border-radius:8px;object-fit:cover;background:var(--surface2);flex-shrink:0;}
+.product-thumb-placeholder{width:40px;height:40px;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+.modal-img-preview{width:100%;max-height:180px;object-fit:contain;border-radius:10px;background:var(--surface2);margin-bottom:10px;display:none;}
+
 .product-table,.sup-table,.receipt-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
 .product-row{display:grid;grid-template-columns:1fr 55px 55px 40px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border);font-size:12px;gap:6px;}
 .product-row:last-child{border-bottom:none;}
@@ -342,6 +346,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
       <input class="field-input" type="text" id="p-category" list="category-datalist" style="margin-bottom:0" placeholder="Nhập hoặc chọn danh mục...">
       <datalist id="category-datalist"></datalist>
     </div>
+    <img id="p-image-preview" class="modal-img-preview" onerror="this.style.display='none'">
+    <div class="mf-row"><div class="field-label">Ảnh (link)</div><input class="field-input" type="text" id="p-image" style="margin-bottom:0" placeholder="Dán link ảnh sản phẩm..." oninput="updateProductImagePreview(this.value)"></div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeProductModal()">Hủy</button>
       <button class="btn-save" onclick="saveProductMaster()">Lưu</button>
@@ -887,9 +893,12 @@ function renderProducts(){
   list.innerHTML=`<div class="product-table">
     <div class="product-row header"><span>Tên (bấm để sửa)</span><span style="text-align:right">Tồn</span><span style="text-align:right">Nhập</span><span></span></div>
     ${f.map(p=>`<div class="product-row">
-      <div onclick="openProductModal('${p.id}')" style="cursor:pointer;">
-        <div style="font-weight:500;color:var(--text);">${p.name}</div>
-        <div style="font-size:10px;color:var(--accent);">${p.price?fmtPrice(p.price):'Chưa có giá bán'}${p.category?' · '+p.category:''}</div>
+      <div onclick="openProductModal('${p.id}')" style="cursor:pointer;display:flex;align-items:center;gap:8px;min-width:0;">
+        ${p.image?`<img src="${escapeHtml(p.image)}" class="product-thumb" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'product-thumb-placeholder',textContent:'📦'}))">`:'<div class="product-thumb-placeholder">📦</div>'}
+        <div style="min-width:0;">
+          <div style="font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</div>
+          <div style="font-size:10px;color:var(--accent);">${p.price?fmtPrice(p.price):'Chưa có giá bán'}${p.category?' · '+p.category:''}</div>
+        </div>
       </div>
       <span style="text-align:right;font-family:var(--mono);${(p.stock||0)<=0?'color:var(--red);':'color:var(--text-dim);'}">${p.stock||0}</span>
       <span class="product-price">${fmtPrice(p.costPrice||0)}</span>
@@ -910,6 +919,8 @@ function openProductModal(id=null){
     document.getElementById('p-price').value=p.price||'';
     document.getElementById('p-stock').value=p.stock||0;
     document.getElementById('p-category').value=p.category||'';
+    document.getElementById('p-image').value=p.image||'';
+    updateProductImagePreview(p.image||'');
   } else {
     document.getElementById('p-id').value='';
     document.getElementById('p-name').value='';
@@ -918,8 +929,15 @@ function openProductModal(id=null){
     document.getElementById('p-price').value='';
     document.getElementById('p-stock').value='0';
     document.getElementById('p-category').value='';
+    document.getElementById('p-image').value='';
+    updateProductImagePreview('');
   }
   setTimeout(()=>document.getElementById('p-name').focus(),100);
+}
+function updateProductImagePreview(url){
+  const img=document.getElementById('p-image-preview');
+  if(url){img.src=url;img.style.display='block';}
+  else{img.removeAttribute('src');img.style.display='none';}
 }
 function closeProductModal(){document.getElementById('product-modal').classList.remove('open');}
 function saveProductMaster(){
@@ -930,6 +948,7 @@ function saveProductMaster(){
   const costPrice=parseInt(document.getElementById('p-costprice').value)||0;
   const price=parseInt(document.getElementById('p-price').value)||0;
   const stock=parseInt(document.getElementById('p-stock').value)||0;
+  const image=document.getElementById('p-image').value.trim();
   const categoryRaw=document.getElementById('p-category').value.trim();
   const existingCat=([...new Set(products.map(p=>p.category||'').filter(Boolean))])
     .find(c=>c.toLowerCase()===categoryRaw.toLowerCase());
@@ -940,9 +959,9 @@ function saveProductMaster(){
   if(editId){
     const idx=products.findIndex(p=>p.id===editId);
     const oldDiscount=products[idx]?.discount||0;
-    products[idx]={id:newId,name,barcode,price,costPrice,discount:oldDiscount,category,stock};
+    products[idx]={id:newId,name,barcode,price,costPrice,discount:oldDiscount,category,stock,image};
   } else {
-    products.push({id:newId,name,barcode,price,costPrice,discount:0,category,stock});
+    products.push({id:newId,name,barcode,price,costPrice,discount:0,category,stock,image});
   }
   saveProducts();renderProducts();closeProductModal();showToast('✓ Đã lưu SP','green');
   syncToSheets(true);
@@ -1067,8 +1086,8 @@ async function gsCheck(){
 }
 
 // Cột: id, barcode, name, price(giá bán - do POS quản lý, chỉ mang theo), costPrice(giá nhập cuối - đã trừ chiết khấu), discount(% chiết khấu lần nhập gần nhất), category, stock
-function productsToRows(){return[['id','barcode','name','price','costPrice','discount','category','stock'],...products.map(p=>[p.id,p.barcode||'',p.name,p.price||0,p.costPrice||0,p.discount||0,p.category||'',p.stock||0])];}
-function rowsToProducts(rows){if(rows.length<2)return[];return rows.slice(1).filter(r=>r[0]).map(r=>({id:String(r[0]),barcode:String(r[1]||''),name:String(r[2]),price:Number(r[3])||0,costPrice:Number(r[4])||0,discount:Number(r[5])||0,category:String(r[6]||''),stock:Number(r[7])||0}));}
+function productsToRows(){return[['id','barcode','name','price','costPrice','discount','category','stock','image'],...products.map(p=>[p.id,p.barcode||'',p.name,p.price||0,p.costPrice||0,p.discount||0,p.category||'',p.stock||0,p.image||''])];}
+function rowsToProducts(rows){if(rows.length<2)return[];return rows.slice(1).filter(r=>r[0]).map(r=>({id:String(r[0]),barcode:String(r[1]||''),name:String(r[2]),price:Number(r[3])||0,costPrice:Number(r[4])||0,discount:Number(r[5])||0,category:String(r[6]||''),stock:Number(r[7])||0,image:String(r[8]||'')}));}
 function suppliersToRows(){return[['id','name','phone','addr'],...suppliers.map(s=>[s.id,s.name,s.phone||'',s.addr||''])];}
 function rowsToSuppliers(rows){if(rows.length<2)return[];return rows.slice(1).filter(r=>r[0]).map(r=>({id:String(r[0]),name:String(r[1]),phone:String(r[2]||''),addr:String(r[3]||'')}));}
 function receiptsToRows(){return[['id','supplierId','supplierName','time','total','items'],...receipts.map(r=>[r.id,r.supplierId||'',r.supplierName||'',r.time,r.total,JSON.stringify(r.items)])];}
